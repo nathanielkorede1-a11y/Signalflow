@@ -44,6 +44,7 @@ The project does not include `node_modules`; `npm install` creates it on your ma
 | `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret |
 | `STRIPE_PREMIUM_PRICE_ID` | Recurring Premium price ID |
 | `NEXT_PUBLIC_APP_URL` | Canonical app URL, including https in production |
+| `AD_PROVIDER_START_URL` | Hosted ad/session URL supplied by your chosen ad provider |
 | `AD_PROVIDER_WEBHOOK_SECRET` | HMAC secret for ad provider callback adapter |
 | `SIGNALFLOW_DEMO_MODE` | `true` for local preview only; `false` for real services |
 
@@ -56,6 +57,7 @@ Never put service-role, webhook, admin, or MT5 secrets in a `NEXT_PUBLIC_` varia
 3. In Supabase SQL Editor, run these migrations in order:
    - `supabase/migrations/0001_initial.sql`
    - `supabase/migrations/0002_hardening.sql`
+   - `supabase/migrations/0003_entitlements_billing.sql`
 4. Set `SIGNALFLOW_DEMO_MODE=false` and restart Next.js.
 5. Register at `/signup`, confirm the email if confirmation is enabled, then sign in at `/login`.
 
@@ -170,3 +172,35 @@ Copy both files into the same folder under `MQL5/Experts` (or put the `.mqh` in 
 The EA publishes only after MT5 confirms that the market order executed. It sends the actual execution price, stop loss, take profit, direction, symbol, RR, and a unique external ID. A failed webhook does not close or modify the MT5 position.
 
 Security: do not distribute an EA containing your production webhook secret. Anyone who obtains the secret can submit signals to your endpoint. Use a unique secret for each private deployment and rotate it if exposed. The webhook is not a substitute for a production secret-management or per-terminal authentication strategy.
+
+## Updated release notes — four implementation stages
+
+### Stage 1 — Live dashboard and entitlements
+
+The dashboard now requests the signed-in account's data from `/api/signals`; the old hardcoded sample trades, fake profile name, sample win-rate and sample performance chart have been removed. The dashboard displays only signals that have an access record for that user. The database ledger `daily_signal_usage` counts signal unlocks per account and UTC date. `grant_premium_signal_access` grants one latest published signal per request, with a maximum of five per Premium account per UTC day. Free users are limited to one verified ad unlock per UTC day. The profile row is locked while quota is updated so simultaneous requests for the same account cannot exceed the limit.
+
+A Free user must complete an ad through a real provider before the server callback grants access. A Premium user uses the dashboard's unlock button; the server checks the plan and quota. Browser-supplied plan values or an ad-completed boolean are never trusted.
+
+**Ad integration is an adapter, not an ad network.** No provider credentials or provider SDK were included in the supplied project. Set `AD_PROVIDER_START_URL` and `AD_PROVIDER_WEBHOOK_SECRET` only after selecting a provider whose hosted flow can pass the session ID and call the documented signed callback. Until then, Free ad unlock intentionally returns a configuration error; do not simulate successful ad views in production.
+
+### Stage 2 — Stripe billing
+
+`POST /api/billing/checkout` creates a Premium subscription checkout for the authenticated user. `POST /api/billing/webhook` verifies Stripe's raw-body signature, handles checkout completion, subscription create/update/delete, and paid/failed invoice events, and records event IDs to make webhook retries idempotent. Premium access is assigned only from verified Stripe events and only while Stripe reports `active` or `trialing`. The dashboard exposes Stripe's customer portal for subscription management.
+
+Create a recurring Premium price in Stripe and set `STRIPE_PREMIUM_PRICE_ID`. Configure the webhook URL as `https://YOUR_DOMAIN/api/billing/webhook` and subscribe to `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, and `invoice.payment_failed`. Set the returned signing secret as `STRIPE_WEBHOOK_SECRET`. Test with Stripe test-mode keys before enabling live mode. Failed/past-due subscriptions are not treated as Premium unless Stripe still reports `active` or `trialing`.
+
+### Stage 3 — M1 candle demonstration EA
+
+`examples/mql5/SignalFlow_M1_CandleDemo.mq5` is a separate demonstration EA; it does not replace or modify the Consecutive Candles Cover strategy. On each newly opened M1 bar it evaluates the candle that just closed: bullish = market BUY; bearish = market SELL; doji = no trade. Defaults are 20 pips SL and 60 pips TP, fixed lot 0.01, and one open position per symbol/magic number. It publishes only after MT5 confirms execution and uses the existing webhook helper.
+
+Copy both `SignalFlow_M1_CandleDemo.mq5` and `SignalFlowWebhook.mqh` into the same `MQL5/Experts` directory and compile the `.mq5` file. Add `https://signalflow-xevn.vercel.app` to MT5 Tools → Options → Expert Advisors → Allow WebRequest for listed URL. Set the webhook URL and secret in the EA inputs. **Run this only on a demo account first.** A pip is broker-symbol dependent: the default follows conventional FX pip sizing; for XAUUSD, indices, or nonstandard broker symbols, set `PipSizeOverride` to the actual price distance represented by one pip on that broker. The one-open-position guard deliberately prevents a new trade every minute while an earlier trade remains open.
+
+### Stage 4 — deployment and verification
+
+1. Apply all three SQL migrations in order in the correct Supabase project.
+2. Configure the environment variables in Vercel (never commit `.env.local` or paste secrets into chat).
+3. Redeploy after changing environment variables.
+4. Confirm login/logout, signal publishing from MT5, signal access quotas, ad-provider callback signatures, Stripe test checkout, subscription lifecycle and customer portal.
+5. Verify the live Vercel deployment is using the updated commit and production dependency version.
+
+The supplied ZIP does not contain your live Supabase credentials, Stripe account, ad-network account, or Vercel environment. Therefore these external services cannot be fully activated or end-to-end tested from this source package alone. The code includes the integration endpoints and configuration points; provider/account setup and live credentials remain deployment tasks. Do not accept customer payments or represent the ad flow as active until those tests pass.

@@ -24,7 +24,7 @@ input double   RiskPercent               = 0.0;
 // SignalFlow settings. Use your own private webhook secret.
 input bool     PublishToSignalFlow       = true;
 input string   SignalFlowBaseUrl          = "https://YOUR-DOMAIN.com";
-input string   SignalFlowWebhookSecret    = "0a1edcb35de0ea66f0930479f809470218c036cad14279259a1fe2fc84466191";
+input string   SignalFlowWebhookSecret    = "CHANGE_ME";
 
 int last_trade_day = -1;
 int signals_today = 0;
