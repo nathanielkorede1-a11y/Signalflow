@@ -44,4 +44,4 @@ export async function POST(req:NextRequest){
   }
   return NextResponse.json({received:true});
  }catch(e){console.error("Stripe webhook processing failed",e);try{await admin.from("stripe_events").delete().eq("event_id",event.id);}catch{}return NextResponse.json({error:"Webhook processing failed"},{status:500});}
-}
+     }
